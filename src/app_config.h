@@ -32,8 +32,14 @@ namespace AppConfig {
   static constexpr uint32_t TFT_SPI_HZ = 40000000;
 
   // Device / URL
+  // Device / URL
   static constexpr const char* DEVICE_ID_STR = "D1";
   static constexpr uint16_t DEVICE_ID_NUM = 0x0020;
+
+  // New API payload config
+  static constexpr uint16_t API_DEVICE_ID = 18;
+  static constexpr const char* API_PARAM_P = "BG";
+
   static constexpr bool USE_SUDIR_QR = true;
-  static constexpr const char* BASE_URL  = "https://logancacy.com/BGBT.php?";
+  static constexpr const char* BASE_URL ="https://woyinpbicubhxkkqzerb.supabase.co/functions/v1/sr?";
 }

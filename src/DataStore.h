@@ -23,8 +23,11 @@ namespace DataStore {
   bool load(SavedRun& out);
   void erase();
 
-  // NEW: append-only query log (no BaseURL)
-  // Stored as qseq + q000001..qXXXXXX string entries in NVS.
+  // Persistent payload history stored in flash as a fixed-size ring buffer.
+  // Only the API payload is stored (no BASE_URL prefix).
+  static constexpr uint16_t MAX_SAVED_TESTS = 1000;
+  static constexpr size_t   MAX_PAYLOAD_LEN = 480;
+
   uint32_t lastQuerySeq();
   bool appendQuery(const char* query, uint32_t& outSeq);
   bool updateQuery(uint32_t seq, const char* query);

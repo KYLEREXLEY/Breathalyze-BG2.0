@@ -94,6 +94,9 @@ private:
   uint32_t _lastBattMs = 0;
   uint8_t  _lastBattPct = 255;
 
+  bool     _heaterOn = false;
+  uint32_t _lowBattSinceMs = 0;
+
   // Live overlay
   uint32_t _lastOverlayMs = 0;
   SensorSample _lastSample{};
@@ -182,7 +185,9 @@ private:
   }
 
   void buzzerOn(bool on) { digitalWrite(_hw.pinBuzzer, on ? HIGH : LOW); }
-  void heaterEnable(bool on) { digitalWrite(_hw.pinHeaterEn, on ? HIGH : LOW); }
+  void heaterEnable(bool on) { 
+    _heaterOn = on;
+    digitalWrite(_hw.pinHeaterEn, on ? HIGH : LOW); }
 
   void beep(uint16_t msOn = 120, uint16_t msOff = 80, uint8_t count = 1) {
     for (uint8_t i = 0; i < count; i++) {
@@ -261,8 +266,8 @@ private:
     buzzerOn(false);
 
     if (_displayInited) {
-      uiHeader(userInitiated ? "Powering off" : "Sleeping");
-      uiTextLines("Goodbye");
+      uiHeader(userInitiated ? "ZZZ..." : "ZZZ... ");
+      uiTextLines(" POWERING OFF ","   GOODBYE    ");
       beep(160, 60, 1);
     }
 
@@ -317,32 +322,47 @@ private:
 
     _touchInited = _touch.begin(_hw.i2cSda, _hw.i2cScl, _hw.touchInt);
 
-    _tft->fillScreen(ST77XX_BLACK);
-    _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    _tft->fillScreen(ST77XX_WHITE);
+    _tft->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
     _tft->setTextSize(2);
     _tft->setCursor(6, 10);
     _tft->print("BOOT...");
-    updateBatteryWidget(true);
+    //updateBatteryWidget(true);
   }
 
-  void uiClear(uint16_t color = ST77XX_BLACK) {
+  void uiClear(uint16_t color = ST77XX_WHITE) {
     if (!_displayInited) return;
     _tft->fillScreen(color);
     _tft->setTextWrap(false);
   }
 
   float readBatteryVolts() {
-    uint32_t mv = analogReadMilliVolts(_hw.pinBattMon);
-    return (mv * 2.0f) / 1000.0f;
+  analogReadMilliVolts(_hw.pinBattMon); // throw away first read
+  delay(2);
+
+  uint32_t sumMv = 0;
+  constexpr int N = 8;
+  for (int i = 0; i < N; i++) {
+    sumMv += analogReadMilliVolts(_hw.pinBattMon);
+    delay(2);
   }
 
+  float mv = (float)sumMv / (float)N;
+  return (mv * 2.0f) / 1000.0f;
+}
+
   uint8_t batteryPctFromVolts(float v) {
-    if (v <= 3.20f) return 0;
-    if (v >= 4.20f) return 100;
-    float pct = (v - 3.20f) / (4.20f - 3.20f) * 100.0f;
-    pct = constrain(pct, 0.0f, 100.0f);
-    return (uint8_t)(pct + 0.5f);
-  }
+  // Device-usable percentage under load
+  constexpr float BATT_V_EMPTY = 3.20f;  // 0%
+  constexpr float BATT_V_FULL  = 4.00f;  // 100% under load, tune if needed
+
+  if (v <= BATT_V_EMPTY) return 0;
+  if (v >= BATT_V_FULL)  return 100;
+
+  float pct = (v - BATT_V_EMPTY) * 100.0f / (BATT_V_FULL - BATT_V_EMPTY);
+  pct = constrain(pct, 0.0f, 100.0f);
+  return (uint8_t)(pct + 0.5f);
+}
 
   void drawBatteryBar(uint8_t pct) {
     if (!_displayInited) return;
@@ -351,41 +371,76 @@ private:
     const int y = BATT_Y;
 
     const int clearX = x - BATT_TEXT_W - 6;
-    _tft->fillRect(clearX, 0, _tft->width() - clearX, TOP_H, ST77XX_BLACK);
+    _tft->fillRect(clearX, 0, _tft->width() - clearX, TOP_H, ST77XX_WHITE);
 
     _tft->setTextSize(1);
-    _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    _tft->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
     _tft->setCursor(x - BATT_TEXT_W, y + 2);
     char pbuf[8];
     snprintf(pbuf, sizeof(pbuf), "%3d%%", (int)pct);
     _tft->print(pbuf);
 
-    _tft->drawRect(x, y, BATT_W, BATT_H, ST77XX_WHITE);
-    _tft->drawRect(x + BATT_W, y + 3, BATT_NUB_W, BATT_H - 6, ST77XX_WHITE);
+    _tft->drawRect(x, y, BATT_W, BATT_H, ST77XX_BLACK);
+    _tft->drawRect(x + BATT_W, y + 3, BATT_NUB_W, BATT_H - 6, ST77XX_BLACK);
 
     int fillW = (BATT_W - 2) * (int)pct / 100;
     _tft->fillRect(x + 1, y + 1, fillW, BATT_H - 2, ST77XX_GREEN);
-    _tft->fillRect(x + 1 + fillW, y + 1, (BATT_W - 2) - fillW, BATT_H - 2, ST77XX_BLACK);
+    _tft->fillRect(x + 1 + fillW, y + 1, (BATT_W - 2) - fillW, BATT_H - 2, ST77XX_WHITE);
   }
 
   void updateBatteryWidget(bool force = false) {
-    if (!_displayInited) return;
-    uint32_t now = millis();
-    if (!force && now - _lastBattMs < 1000) return;
-    _lastBattMs = now;
+  if (!_displayInited) return;
 
+  uint32_t now = millis();
+  if (!force && now - _lastBattMs < 1000) return;
+  _lastBattMs = now;
+
+  // First boot draw: allow one sample so the icon is not blank
+  if (_lastBattPct == 255) {
     uint8_t pct = batteryPctFromVolts(readBatteryVolts());
-    bool changed = (_lastBattPct == 255) || (abs(pct - (int)_lastBattPct) >= 1);
-
-    if (force || changed) {
-      _lastBattPct = pct;
-      drawBatteryBar(pct);
-    }
+    _lastBattPct = pct;
+    drawBatteryBar(pct);
+    return;
   }
+
+  // When heater/sensors are OFF, freeze the displayed percent.
+  // This prevents the battery from "jumping back up" after load sag disappears.
+  if (!_heaterOn) {
+    if (force) drawBatteryBar(_lastBattPct);
+    _lowBattSinceMs = 0;
+    return;
+  }
+
+  // Heater/sensors ON -> show live device battery %
+  uint8_t pct = batteryPctFromVolts(readBatteryVolts());
+
+  // Simple smoothing only while loaded
+  uint8_t shownPct = (uint8_t)((pct + _lastBattPct) / 2);
+
+  if (shownPct != _lastBattPct || force) {
+    _lastBattPct = shownPct;
+    drawBatteryBar(_lastBattPct);
+  }
+
+  // Optional: low battery auto-off only while loaded
+  if (_lastBattPct <= 1) {
+    if (_lowBattSinceMs == 0) _lowBattSinceMs = now;
+
+    if (now - _lowBattSinceMs >= 1500) {
+      uiHeader("LOW BATT");
+      uiTextLines(" CHARGE DEVICE ", " POWERING OFF ");
+      beep(120, 60, 2);
+      delay(1200);
+      goToDeepSleep(false);
+    }
+  } else {
+    _lowBattSinceMs = 0;
+  }
+}
 
   void uiHeader(const char* title) {
     if (!_displayInited) return;
-    uiClear(ST77XX_BLACK);
+    uiClear(ST77XX_WHITE);
 
     int reserveRight = BATT_TEXT_W + BATT_W + BATT_NUB_W + BATT_PAD_R + 10;
     int maxTitlePx = _tft->width() - reserveRight - 6;
@@ -410,63 +465,75 @@ private:
       }
     }
 
-    _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    _tft->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
     _tft->setTextSize(2);
-    _tft->setCursor(6, 10);
+    _tft->setCursor(3, 10);
     _tft->print(buf);
 
-    _tft->drawFastHLine(6, 32, _tft->width() - 12, ST77XX_WHITE);
+    _tft->drawFastHLine(3, 32, _tft->width() - 12, ST77XX_BLACK);
 
     int bodyH = _tft->height() - TOP_H - BOTTOM_OVERLAY_H;
-    if (bodyH > 0) _tft->fillRect(0, TOP_H, _tft->width(), bodyH, ST77XX_BLACK);
+    if (bodyH > 0) _tft->fillRect(0, TOP_H, _tft->width(), bodyH, ST77XX_WHITE);
   }
 
-  void uiTextLines(const char* l1, const char* l2=nullptr, const char* l3=nullptr, const char* l4=nullptr) {
+  void uiTextLines(const char* l1, const char* l2=nullptr, const char* l3=nullptr, const char* l4=nullptr, const char* l5=nullptr, const char* l6=nullptr, const char* l7=nullptr, const char* l8=nullptr, const char* l9=nullptr, const char* l10=nullptr, const char* l11=nullptr) {
     if (!_displayInited) return;
 
     int y0 = 45;
     int h = _tft->height() - y0 - BOTTOM_OVERLAY_H - 4;
-    if (h > 0) _tft->fillRect(0, y0, _tft->width(), h, ST77XX_BLACK);
+    if (h > 0) _tft->fillRect(0, y0, _tft->width(), h, ST77XX_WHITE);
 
-    _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    _tft->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
     _tft->setTextSize(2);
 
     int y = y0;
     auto line = [&](const char* s) {
       if (!s) return;
-      _tft->setCursor(6, y);
+      _tft->setCursor(3, y);
       _tft->print(s);
       y += 22;
     };
-    line(l1); line(l2); line(l3); line(l4);
+    line(l1); line(l2); line(l3); line(l4); line(l5); line(l6); line(l7); line(l8); line(l9); line(l10); line(l11);
 
     updateBatteryWidget(false);
   }
+  void uiPrintValueAt(int x, int y, int charsWide, const char* fmt, int value) {
+  if (!_displayInited) return;
+
+  const int charW = 6 * 2;   // built-in font, textSize(2)
+  const int charH = 8 * 2;
+
+  // Clear only the numeric field, not the whole line
+  _tft->fillRect(x, y, charsWide * charW, charH, ST77XX_WHITE);
+
+  _tft->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
+  _tft->setTextSize(2);
+  _tft->setCursor(x, y);
+
+  char buf[16];
+  snprintf(buf, sizeof(buf), fmt, value);
+  _tft->print(buf);
+}
 
   void uiProgressBar(uint8_t percent) {
-    if (!_displayInited) return;
+  if (!_displayInited) return;
 
-    const int x = 10;
-    const int y = _tft->height() - BOTTOM_OVERLAY_H - 26;
-    const int w = _tft->width() - 20;
-    const int h = 16;
+  const int x = 10;
+  const int y = _tft->height() - BOTTOM_OVERLAY_H - 111;
+  const int w = _tft->width() - 20;
+  const int h = 16;
 
-    _tft->fillRect(0, y - 22, _tft->width(), 22, ST77XX_BLACK);
-    _tft->drawRect(x, y, w, h, ST77XX_WHITE);
+  _tft->drawRect(x, y, w, h, ST77XX_BLACK);
 
-    int fillW = (int)((w - 2) * (percent / 100.0f));
-    _tft->fillRect(x + 1, y + 1, fillW, h - 2, ST77XX_GREEN);
-    _tft->fillRect(x + 1 + fillW, y + 1, (w - 2) - fillW, h - 2, ST77XX_BLACK);
+  int fillW = (int)((w - 2) * (percent / 100.0f));
+  _tft->fillRect(x + 1, y + 1, fillW, h - 2, ST77XX_GREEN);
+  _tft->fillRect(x + 1 + fillW, y + 1, (w - 2) - fillW, h - 2, ST77XX_WHITE);
 
-    _tft->setTextSize(2);
-    _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-    _tft->setCursor(10, y - 20);
-    char buf[24];
-    snprintf(buf, sizeof(buf), "Warmup %3d%%", (int)percent);
-    _tft->print(buf);
+  // Only redraw the 3-digit percentage, not the whole "WARMUP xxx%" line
+  uiPrintValueAt(10 + 7 * 12, y - 20, 3, "%3d", (int)percent);
 
-    updateBatteryWidget(false);
-  }
+  updateBatteryWidget(false);
+}
 
   void drawLiveSensorOverlay() {
     if (!_displayInited) return;
@@ -482,10 +549,10 @@ private:
     }
 
     const int y = _tft->height() - BOTTOM_OVERLAY_H;
-    _tft->fillRect(0, y, _tft->width(), BOTTOM_OVERLAY_H, ST77XX_BLACK);
+    _tft->fillRect(0, y, _tft->width(), BOTTOM_OVERLAY_H, ST77XX_WHITE);
 
     _tft->setTextSize(1);
-    _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    _tft->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
 
     _tft->setCursor(2, y + 4);
     char l1[64];
@@ -618,7 +685,7 @@ private:
     if (!_savedThisRun || _savedSeq == 0) return;
 
     char qbuf[1800];
-    buildResultUrlBT(qbuf, sizeof(qbuf));
+    buildResultPayload(qbuf, sizeof(qbuf));
     if (DataStore::updateQuery(_savedSeq, qbuf)) {
       Serial.printf("[FLASH] Updated seq=%lu BG=%03d",
                     (unsigned long)_savedSeq, _userGlucose);
@@ -660,36 +727,67 @@ private:
     }
   }
 
+  uint16_t scaleApiValue(float v) {
+    if (v < 0.0f) v = 0.0f;
+    uint32_t scaled = (uint32_t)lroundf(v * 1000.0f);
+    if (scaled > 65535UL) scaled = 65535UL;
+    return (uint16_t)scaled;
+  }
 
-  // ===================== BT_URL =====================
-  void buildResultUrlBT(char* buffer, size_t bufferSize) {
+  void appendApiField(String& url, char group, int idx, float value) {
+    url += "&";
+    url += group;
+    url += String(idx);
+    url += "=";
+    url += String(scaleApiValue(value));
+  }
+
+  void appendApiSensorGroup(String& url, char group, size_t sensorIdx) {
+    int idx = 1;
+
+    // baseline -> 1..3
+    for (int k = 0; k < 3; k++) {
+      appendApiField(url, group, idx++, _baseVals[sensorIdx][k]);
+    }
+
+    // test 1 -> 4..6
+    for (int k = 0; k < 3; k++) {
+      appendApiField(url, group, idx++, _resVals[0][sensorIdx][k]);
+    }
+
+    // test 2 -> 7..9
+    for (int k = 0; k < 3; k++) {
+      appendApiField(url, group, idx++, _resVals[1][sensorIdx][k]);
+    }
+  }
+
+  void buildResultUrlCommon(char* buffer, size_t bufferSize, bool includeBaseUrl) {
+    static const char GROUP_KEYS[NUM_SENSORS] = { 'a', 'b', 'c', 'e', 'f' };
+
     String url;
-    url.reserve(1500);
-    url += "id="; url += AppConfig::DEVICE_ID_STR;
+    url.reserve(1800);
 
-    int bIndex = 1;
-    for (size_t s = 0; s < NUM_SENSORS; s++) {
-      for (int k = 0; k < 3; k++) {
-        url += "&b"; url += String(bIndex++);
-        url += "=";  url += String(_baseVals[s][k], 3);
-      }
+    if (includeBaseUrl) {
+      url += AppConfig::BASE_URL;
     }
 
-    int rIndex = 1;
-    for (int test = 0; test < 2; test++) {
-      for (size_t s = 0; s < NUM_SENSORS; s++) {
-        for (int k = 0; k < 3; k++) {
-          url += "&r"; url += String(rIndex++);
-          url += "=";  url += String(_resVals[test][s][k], 3);
-        }
-      }
-    }
+    url += "d=";
+    url += String(AppConfig::API_DEVICE_ID);
 
+    url += "&p=";
+    url += AppConfig::API_PARAM_P;
+
+    // put bg before sensor fields to match your example
     if (_userGlucose >= 0) {
       url += "&bg=";
       char gbuf[8];
       snprintf(gbuf, sizeof(gbuf), "%03d", _userGlucose);
       url += gbuf;
+    }
+
+    // S1..S5 => a,b,c,e,f
+    for (size_t s = 0; s < NUM_SENSORS && s < 5; s++) {
+      appendApiSensorGroup(url, GROUP_KEYS[s], s);
     }
 
     if (_hasAppTimestamp) {
@@ -699,78 +797,21 @@ private:
 
     strncpy(buffer, url.c_str(), bufferSize - 1);
     buffer[bufferSize - 1] = 0;
+  }
+
+  // ===================== PAYLOAD ONLY (for flash storage) =====================
+  void buildResultPayload(char* buffer, size_t bufferSize) {
+    buildResultUrlCommon(buffer, bufferSize, false);
+  }
+
+  // ===================== BT_URL =====================
+  void buildResultUrlBT(char* buffer, size_t bufferSize) {
+    buildResultUrlCommon(buffer, bufferSize, false);
   }
 
   // ===================== QR_URL =====================
   void buildResultUrlQR(char* buffer, size_t bufferSize) {
-    String url;
-    url.reserve(1500);
-    url += AppConfig::BASE_URL;
-    url += "id="; url += AppConfig::DEVICE_ID_STR;
-
-    int bIndex = 1;
-    for (size_t s = 0; s < NUM_SENSORS; s++) {
-      for (int k = 0; k < 3; k++) {
-        url += "&b"; url += String(bIndex++);
-        url += "=";  url += String(_baseVals[s][k], 3);
-      }
-    }
-
-    int rIndex = 1;
-    for (int test = 0; test < 2; test++) {
-      for (size_t s = 0; s < NUM_SENSORS; s++) {
-        for (int k = 0; k < 3; k++) {
-          url += "&r"; url += String(rIndex++);
-          url += "=";  url += String(_resVals[test][s][k], 3);
-        }
-      }
-    }
-
-    if (_userGlucose >= 0) {
-      url += "&bg=";
-      char gbuf[8];
-      snprintf(gbuf, sizeof(gbuf), "%03d", _userGlucose);
-      url += gbuf;
-    }
-
-    if (_hasAppTimestamp) {
-      url += "&ts=";
-      url += String((unsigned long)_appTimestamp);
-    }
-
-    strncpy(buffer, url.c_str(), bufferSize - 1);
-    buffer[bufferSize - 1] = 0;
-  }
-    void buildResultUrlQRSudir(char* buffer, size_t bufferSize) {
-    uint16_t vals[45];
-    buildSudirValues(vals);
-
-    String url;
-    url.reserve(600);
-    url += "https://sudhirshrestha.com/breath_sensor_qrc/submit";
-    url += "?id=";
-    url += String(AppConfig::DEVICE_ID_NUM);
-    url += "&v=";
-
-    for (int i = 0; i < 45; i++) {
-      url += String(vals[i]);
-      if (i < 44) url += ",";
-    }
-
-    if (_userGlucose >= 0) {
-      url += "&bg=";
-      char gbuf[8];
-      snprintf(gbuf, sizeof(gbuf), "%03d", _userGlucose);
-      url += gbuf;
-    }
-
-    if (_hasAppTimestamp) {
-      url += "&ts=";
-      url += String((unsigned long)_appTimestamp);
-    }
-
-    strncpy(buffer, url.c_str(), bufferSize - 1);
-    buffer[bufferSize - 1] = 0;
+    buildResultUrlCommon(buffer, bufferSize, true);
   }
 
   bool generateQr(const char* text) {
@@ -803,8 +844,8 @@ private:
     int16_t x0 = (screenW - totalPx) / 2;
     int16_t y0 = (screenH - totalPx) / 2;
 
-    _tft->fillScreen(ST77XX_BLACK);
-    _tft->fillRect(x0, y0, totalPx, totalPx, ST77XX_WHITE);
+    _tft->fillScreen(ST77XX_WHITE);
+    _tft->fillRect(x0, y0, totalPx, totalPx, ST77XX_BLACK);
 
     int16_t mx0 = x0 + quietPx;
     int16_t my0 = y0 + quietPx;
@@ -813,15 +854,15 @@ private:
       for (uint8_t x = 0; x < _qr.size; x++) {
         if (qrcode_getModule(&_qr, x, y)) {
           _tft->fillRect(mx0 + x * moduleSize, my0 + y * moduleSize,
-                         moduleSize, moduleSize, ST77XX_BLACK);
+                         moduleSize, moduleSize, ST77XX_WHITE); 
         }
       }
     }
 
     _tft->setTextSize(2);
-    _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-    _tft->setCursor(6, 10);
-    _tft->print("Scan QR code");
+    _tft->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
+    _tft->setCursor(3, 30);
+    _tft->print(" SCAN QR CODE ");
   }
 
   // ===================== Glucose UI =====================
@@ -833,18 +874,18 @@ private:
     int y = 110;
 
     auto drawBox = [&](int x, int digit) {
-      _tft->drawRect(x, y - 42, boxW, 36, ST77XX_WHITE);
+      _tft->drawRect(x, y - 42, boxW, 36, ST77XX_BLACK);
       _tft->setTextSize(2);
-      _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+      _tft->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
       _tft->setCursor(x + 16, y - 36);
       _tft->print("^");
 
-      _tft->drawRect(x, y, boxW, boxH, ST77XX_WHITE);
+      _tft->drawRect(x, y, boxW, boxH, ST77XX_BLACK);
       _tft->setTextSize(4);
       _tft->setCursor(x + 10, y + 12);
       _tft->print(digit);
 
-      _tft->drawRect(x, y + boxH + 6, boxW, 36, ST77XX_WHITE);
+      _tft->drawRect(x, y + boxH + 6, boxW, 36, ST77XX_BLACK);
       _tft->setTextSize(2);
       _tft->setCursor(x + 16, y + boxH + 12);
       _tft->print("v");
@@ -860,7 +901,7 @@ const int bh = 44;
 const int bx = (_tft->width() - bw) / 2;
 
 _tft->setTextSize(2);
-_tft->drawRect(bx, btnY, bw, bh, ST77XX_WHITE);
+_tft->drawRect(bx, btnY, bw, bh, ST77XX_BLACK);
 _tft->setCursor(bx + 42, btnY + 14);
 _tft->print("OK");
 
@@ -890,8 +931,8 @@ _tft->print("OK");
 
     _state = State::Glucose;
     heaterEnable(false);
-    uiHeader("Glucose");
-    uiTextLines("3 digits");
+    uiHeader("BG#");
+    uiTextLines("  ENTER BG#   ");
     glucoseDraw();
   }
 
@@ -1001,18 +1042,25 @@ _tft->print("OK");
       return (uint8_t)(90.0f + eased * 10.0f);
     }
   }
-
   void enterWarmup() {
-    heaterEnable(true);
-    _warmupStartMs = millis();
-    _lastWarmupPct = 255;
+  heaterEnable(true);
+  _warmupStartMs = millis();
+  _lastWarmupPct = 255;
 
-    uiHeader("Warmup");
-    uiTextLines("Heating sensors", "Please wait...", "Hold: power off");
-    uiProgressBar(0);
+  uiHeader("WARMUP");
+  uiTextLines("", "HEATING SENSOR", "PLEASE WAIT...", "", "", "", "", "", "", " HOLD BUTTON: ", " TO POWER OFF ");
 
-    _state = State::Warmup;
-  }
+  const int y = _tft->height() - BOTTOM_OVERLAY_H - 111;
+  _tft->setTextSize(2);
+  _tft->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
+  _tft->setCursor(10, y - 20);
+  _tft->print("WARMUP");
+  _tft->setCursor(10 + 7 * 12, y - 20);   // after "WARMUP "
+  _tft->print("   %");                    // placeholder
+
+  uiProgressBar(0);
+  _state = State::Warmup;
+}
 
   void enterReady() {
     _state = State::Ready;
@@ -1024,25 +1072,79 @@ _tft->print("OK");
     _readyReleaseSinceMs = 0;
     _button.clearEvents();
 
-    uiHeader(_currentTest == 0 ? "Test 1" : "Test 2");
+    uiHeader(_currentTest == 0 ? "TEST 1" : "TEST 2");
     if (_currentTest == 0 && !_baselineCaptured) {
-      uiTextLines("Tap to start", "Blow", "Hold: power off");
+      uiTextLines("","  TAP BUTTON  " ,"   TO START   ", " THEN BLOW 6S ","","","","","", " HOLD BUTTON: ", " TO POWER OFF ");
     } else {
-      uiTextLines("Tap to start", "Blow 6 sec", "Hold: power off");
+      uiTextLines("","  TAP BUTTON  " ,"   TO START   ", " THEN BLOW 6S ","","","","","", " HOLD BUTTON: ", " TO POWER OFF ");
     }
   }
 
   void enterBlow() {
-    _state = State::Blow;
-    _blowStartMs = millis();
-    beep(90, 40, 1);
+  if (_currentTest == 0 && !_baselineCaptured) {
+    captureBaselineOnceFromCandidate();
   }
 
-  void enterIntermission() {
-    _state = State::Intermission;
-    _interStartMs = millis();
-    uiHeader("Rest");
-  }
+  _state = State::Blow;
+  _blowStartMs = millis();
+  beep(90, 40, 1);
+
+  uiHeader(_currentTest == 0 ? "TEST 1" : "TEST 2");
+  uiTextLines("",
+              "  BLOW NOW!!  ",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              " HOLD BUTTON: ",
+              " TO POWER OFF ");
+
+  const int lineX = 3;
+  const int lineY = 45 + 2 * 22;
+  const int numX = lineX + 3 * 12;
+  const int suffixX = lineX + 5 * 12;
+
+  _tft->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
+  _tft->setTextSize(2);
+  _tft->setCursor(suffixX, lineY);
+  _tft->print("S LEFT");
+
+  uiPrintValueAt(numX, lineY, 2, "%2d", 6);
+}
+void enterIntermission() {
+  _state = State::Intermission;
+  _interStartMs = millis();
+  _lastInterSecShown = 0xFFFFFFFF;
+
+  uiHeader("REST");
+  uiTextLines("",
+              " INTERMISSION ",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              " HOLD BUTTON: ",
+              " TO POWER OFF ");
+
+  const int lineX   = 3;
+  const int lineY   = 45 + 2 * 22;
+  const int charW   = 12;          // built-in font at textSize(2)
+  const int numX    = lineX + 3 * charW;
+  const int suffixX = lineX + 5 * charW;   // leave a full 3-char number field
+
+  _tft->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
+  _tft->setTextSize(2);
+  _tft->setCursor(suffixX, lineY);
+  _tft->print("S LEFT");
+
+  uiPrintValueAt(numX, lineY, 2, "%2d", 10);
+}
 
   void enterShowQr() {
     _state = State::ShowQr;
@@ -1054,9 +1156,6 @@ _tft->print("OK");
     _ble.begin("BGBT_FEATHER_V2");
     _lastBleBinaryTxMs = 0;
     _button.clearEvents();
-
-    uiHeader("Results");
-    uiTextLines("Generating QR...", "BLE advertising", "Hold: power off");
   }
 
 public:
@@ -1157,8 +1256,8 @@ public:
         updateSavedQueryWithLatestResult();
 
         heaterEnable(false);
-        uiHeader("All Done");
-        uiTextLines("BG received", "Sleeping...");
+        uiHeader("ZZZ...");
+        uiTextLines("","","   ALL DONE   ", "   GOODBYE!   ");
         beep(120, 60, 2);
 
         _state = State::Done;
@@ -1182,7 +1281,7 @@ public:
     sampleSensorsToRingIfDue();
 
     if (_state != State::ShowQr) {
-      drawLiveSensorOverlay();
+      //drawLiveSensorOverlay(); //uncomment for live sensor overlay
       updateBatteryWidget(false);
     }
 
@@ -1239,12 +1338,6 @@ public:
               }
               _candidateValid = true;
             }
-
-            if (!captureBaselineOnceFromCandidate()) {
-              uiHeader("Baseline");
-              uiTextLines("Not ready yet", "Wait 2 sec", "Tap again");
-              break;
-            }
           }
 
           enterBlow();
@@ -1266,7 +1359,7 @@ public:
             _testsComplete = true;
 
             char qbuf[1800];
-            buildResultUrlBT(qbuf, sizeof(qbuf));
+            buildResultPayload(qbuf, sizeof(qbuf));
             if (DataStore::appendQuery(qbuf, _savedSeq)) {
               _savedThisRun = true;
               Serial.printf("[FLASH] Saved run seq=%lu\n", (unsigned long)_savedSeq);
@@ -1283,12 +1376,15 @@ public:
         uint32_t sec = (remain + 999) / 1000;
 
         static uint32_t lastShown = 0xFFFFFFFF;
-        if (sec != lastShown) {
-          lastShown = sec;
-          char l2[24];
-          snprintf(l2, sizeof(l2), "%lus left", (unsigned long)sec);
-          uiTextLines("Blow now!", l2, "Hold: power off");
-        }
+if (sec != lastShown) {
+  lastShown = sec;
+
+  const int lineX = 3;
+  const int lineY = 45 + 2 * 22;
+  const int numX = lineX + 3 * 12;
+
+  uiPrintValueAt(numX, lineY, 1, "%2d", (int)sec);
+}
 
         break;
       }
@@ -1307,11 +1403,15 @@ public:
         uint32_t sec = (remain + 999) / 1000;
 
         if (sec != _lastInterSecShown) {
-          _lastInterSecShown = sec;
-          char l2[24];
-          snprintf(l2, sizeof(l2), "%lus left", (unsigned long)sec);
-          uiTextLines(l2, "Hold: power off");
-        }
+  _lastInterSecShown = sec;
+
+  const int lineX = 3;
+  const int lineY = 45 + 2 * 22;
+  const int charW = 12;
+  const int numX  = lineX + 3 * charW;
+
+  uiPrintValueAt(numX, lineY, 2, "%2d", (int)sec);
+}
         break;
       }
 
@@ -1335,7 +1435,8 @@ public:
           char urlBuf[1800];
 
           if (AppConfig::USE_SUDIR_QR) {
-            buildResultUrlQRSudir(urlBuf, sizeof(urlBuf));
+            //buildResultUrlQRSudir(urlBuf, sizeof(urlBuf));
+            buildResultUrlQR(urlBuf, sizeof(urlBuf));
           } else {
             buildResultUrlQR(urlBuf, sizeof(urlBuf));
           }
@@ -1347,7 +1448,7 @@ public:
             drawQrOnBlack(4);
             _qrDrawn = true;
           } else {
-            uiTextLines("QR gen failed", "Hold: power off");
+            uiTextLines("QR gen failed", " HOLD BUTTON: ", " TO POWER OFF ");
           }
         }
         maybeSendBlePayload();
