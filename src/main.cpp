@@ -21,14 +21,14 @@ static const int TFT_MISO = 21;       // MISO GPIO21 (not used by ST7789 but ok)
 static const int TFT_CS   = 14;       // D14 GPIO14
 static const int TFT_DC   = 33;       // D33 GPIO33
 
-// TFT backlight control (ACTIVE-LOW). You said backlight is ON when grounded.
+// TFT backlight control (ACTIVE-LOW).
 static const int PIN_TFT_BL  = 27;    // D27 GPIO27
 
 // TFT reset pin (wired)
 static const int PIN_TFT_RST = 4;     // GPIO4 (A5) -> TFT RST (active-low)
 
-// TFT VCC control enable pin (ONLY if you have a load switch / transistor!)
-static const int PIN_TFT_PWR = 15;    // safe default
+// TFT VCC control enable pin 
+static const int PIN_TFT_PWR = 15;    
 
 // Battery monitor (internal divider): GPIO35
 static const int PIN_BATT_MON = 35;
@@ -45,10 +45,10 @@ static constexpr size_t NUM_SENS = 5;
 static const std::array<int, NUM_SENS> SENSOR_PINS = { 26, 25, 34, 39, 36 };
 
 // ============================= BUTTON POLARITY ============================
-// Your stated config: Active HIGH + external pulldown (idle LOW, pressed HIGH)
+// config: Active HIGH + external pulldown (idle LOW, pressed HIGH)
 static constexpr bool BUTTON_ACTIVE_LOW = false;
 
-// If your button ever feels floaty, set true temporarily
+// If button ever feels floaty, set true 
 static constexpr bool USE_INTERNAL_PULLS = false;
 
 // ============================= HARDWARE CONFIG ============================

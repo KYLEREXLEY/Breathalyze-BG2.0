@@ -41,7 +41,7 @@ bool TouchCst816::i2cReadBytes(uint8_t addr, uint8_t reg, uint8_t *buf, size_t n
   Wire.beginTransmission(addr);
   Wire.write(reg);
 
-  // IMPORTANT: use STOP to avoid i2cWriteReadNonStop (your error log mentions that path)
+  // IMPORTANT: use STOP to avoid i2cWriteReadNonStop
   if (Wire.endTransmission(true) != 0) return false;
 
   size_t got = Wire.requestFrom((int)addr, (int)n); // normal requestFrom
@@ -83,7 +83,7 @@ TouchPoint TouchCst816::read(uint16_t screenW, uint16_t screenH) {
     if (_failStreak >= 3)  _cooldownUntilMs = now + 250;
     if (_failStreak >= 10) {
       Serial.println("[TOUCH] Too many I2C failures; disabling touch until reboot.");
-      _present = false; // stop any future reads (prevents your repeated Wire errors)
+      _present = false; // stop any future reads (prevents repeated Wire errors)
     }
     return tp;
   }

@@ -30,7 +30,7 @@ private:
 
   static constexpr uint8_t  CST816_ADDR = 0x15;
 
-  // Same scaling assumptions you had earlier
+  // Same scaling
   static constexpr uint16_t RAW_MAX_X = 170;
   static constexpr uint16_t RAW_MAX_Y = 320;
 

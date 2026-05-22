@@ -777,7 +777,7 @@ private:
     url += "&p=";
     url += AppConfig::API_PARAM_P;
 
-    // put bg before sensor fields to match your example
+    // put bg before sensor fields to match expected Logan BLE payload
     if (_userGlucose >= 0) {
       url += "&bg=";
       char gbuf[8];
@@ -1433,7 +1433,7 @@ if (sec != lastShown) {
 
         if (!_qrDrawn) {
           char urlBuf[1800];
-
+          //Both Logan and Sudir paths use same QR and BLE URL format now
           if (AppConfig::USE_SUDIR_QR) {
             //buildResultUrlQRSudir(urlBuf, sizeof(urlBuf));
             buildResultUrlQR(urlBuf, sizeof(urlBuf));

@@ -7,7 +7,7 @@ static constexpr size_t TOTAL_VALUES = 45;
 static constexpr size_t PACKET_SIZE = 2 + TOTAL_VALUES * 2;
 static constexpr uint8_t ACK_VALUE = 0xAA;
 static constexpr uint32_t UNKNOWN_TO_SUDIR_GRACE_MS = 1200;
-//Logans android app
+//Logans android app and now IOS app 
 static NimBLEUUID SERVICE_UUID("6E400021-B5A3-F393-E0A9-E50E24DCCA9E");
 static NimBLEUUID CHAR_RX_UUID("6E400022-B5A3-F393-E0A9-E50E24DCCA9E");
 static NimBLEUUID CHAR_TX_UUID("6E400023-B5A3-F393-E0A9-E50E24DCCA9E");
