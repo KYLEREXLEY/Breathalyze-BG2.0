@@ -10,9 +10,9 @@ namespace AppConfig {
   static constexpr uint32_t OFF_HOLD_TO_SLEEP_MS = 3000;  // hold to turn OFF
 
   // Warmup / timing
-  static constexpr uint32_t WARMUP_DURATION_MS = 10000;
+  static constexpr uint32_t WARMUP_DURATION_MS = 120000;
   static constexpr uint32_t INTERTEST_DELAY_MS = 10000;
-  static constexpr uint32_t AUTO_OFF_AFTER_MS  = 15000000;
+  static constexpr uint32_t AUTO_OFF_AFTER_MS  = 120000;
 
   // Sampling
   static constexpr uint32_t BLOW_WINDOW_MS   = 6000;
@@ -31,15 +31,14 @@ namespace AppConfig {
   static constexpr int TFT_ROTATION = 0;
   static constexpr uint32_t TFT_SPI_HZ = 40000000;
 
-  // Device / URL
-  // Device / URL
+  // Device
   static constexpr const char* DEVICE_ID_STR = "D1";
   static constexpr uint16_t DEVICE_ID_NUM = 0x0020;
 
   // New API payload config
   static constexpr uint16_t API_DEVICE_ID = 18;
   static constexpr const char* API_PARAM_P = "BG";
-
+  // URL
   static constexpr bool USE_SUDIR_QR = true;
   static constexpr const char* BASE_URL ="https://woyinpbicubhxkkqzerb.supabase.co/functions/v1/sr?";
 }
